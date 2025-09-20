@@ -216,5 +216,3 @@ def generate_wallpaper():
     img.save("wallpaper.png")
     print(f"Wallpaper with {CONFIG['pattern']} pattern saved as wallpaper.png")
 
-if __name__ == "__main__":
-    generate_wallpaper()
