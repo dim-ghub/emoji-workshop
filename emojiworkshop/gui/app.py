@@ -43,7 +43,7 @@ class WorkshopGUI:
         self.root.minsize(1000, 700)
         
         # Application state
-        self.selected_emojis = ["👀", "✨", "🦖", "🐈‍⬛", "🐧", "🦀"]
+        self.selected_emojis = ["👀", "✨", "🦖", "🐈‍⬛", "🐧", "🦀", "🦀"]
         self.selected_pattern = Pattern.MOSAIC
         self.selected_color = ColorPalettes.GRAY
         self.current_config = None
@@ -296,7 +296,7 @@ class WorkshopGUI:
             emoji_frame,
             height=70,
             width=280,
-            font=ctk.CTkFont(size=16),
+            font=ctk.CTkFont(family="NotoEmoji", size=16),
             corner_radius=8,
             border_width=2,
             border_color=("gray70", "gray35"),
