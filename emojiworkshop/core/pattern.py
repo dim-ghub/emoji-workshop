@@ -45,7 +45,7 @@ _svg_cache = SvgCache()
 
 
 def tint_image(img: Image.Image, color: Tuple[int, int, int]) -> Image.Image:
-    """Tint an RGBA image with the specified RGB color."""
+    """Replace all non-transparent pixels with the specified color."""
     if img.mode != 'RGBA':
         img = img.convert('RGBA')
     
@@ -57,12 +57,7 @@ def tint_image(img: Image.Image, color: Tuple[int, int, int]) -> Image.Image:
         for x in range(width):
             pixel = pixels[x, y]
             if pixel[3] > 0:
-                orig_r, orig_g, orig_b, orig_a = pixel
-                brightness = (orig_r + orig_g + orig_b) / 3 / 255
-                new_r = min(255, int(r * brightness))
-                new_g = min(255, int(g * brightness))
-                new_b = min(255, int(b * brightness))
-                pixels[x, y] = (new_r, new_g, new_b, orig_a)
+                pixels[x, y] = (r, g, b, pixel[3])
     
     return img
 
