@@ -4,16 +4,14 @@ from emojiworkshop.core.colors import ColorPalettes
 from emojiworkshop.core.pattern import PatternFactory, Pattern
 
 
-# Default configuration
 DEFAULT_CONFIG = {
-    "emojis": ["👀", "✨", "🦖", "🐈‍⬛", "🐧", "🦀"],
+    "svg_path": "assets/caelestia.svg",
+    "svg_size": 96,
     "img_size": (1920, 1080),
-    "font_path": "assets/NotoEmoji-Bold.ttf",
-    "font_size": 96,
     "grid": (6, 10),
     "pattern": Pattern.MOSAIC,
     "scale_variation": 0.7,
-    "emoji_count": 200,
+    "svg_count": 200,
     "color": ColorPalettes.GRAY,
     "margin": 10,
     "output_filename": "wallpaper.png"
@@ -25,19 +23,14 @@ def generate_wallpaper_with_config(config: Dict[str, Any]):
     img = Image.new("RGB", config["img_size"], config["color"].background)
     draw = ImageDraw.Draw(img)
 
-    # Create pattern configuration with proper font_color
     pattern_config = config.copy()
-    pattern_config["font_color"] = config["color"].foreground
     pattern_config["bg_color"] = config["color"].background
 
-    # Create pattern instance using factory
     pattern = PatternFactory.create_pattern(config["pattern"], pattern_config)
 
-    # Generate the pattern
-    pattern.generate(img, draw, None, config["emojis"],
+    pattern.generate(img, draw, config["svg_path"], config["svg_count"],
                      config["img_size"], config["scale_variation"])
 
-    # Save with specified filename
     output_file = config.get("output_filename", "wallpaper.png")
     img.save(output_file)
     print(f"Wallpaper with {config['pattern']} pattern saved as {output_file}")

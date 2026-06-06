@@ -1,19 +1,18 @@
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from enum import Enum
-
 import random
 import math
 
 
-class EmojiBox:
-    """Represents a bounding box for an emoji with collision detection."""
+class SvgBox:
+    """Represents a bounding box for an SVG with collision detection."""
 
     def __init__(self, x: int, y: int, w: int, h: int):
         self.x, self.y, self.w, self.h = x, y, w, h
 
-    def overlaps(self, other: 'EmojiBox', margin: int = 10) -> bool:
+    def overlaps(self, other: 'SvgBox', margin: int = 10) -> bool:
         """Check if this box overlaps with another box including margin."""
         return not (self.x + self.w + margin < other.x or
                     other.x + other.w + margin < self.x or
@@ -21,125 +20,102 @@ class EmojiBox:
                     other.y + other.h + margin < self.y)
 
 
-class FontCache:
-    """Efficient font caching to avoid repeated font loading."""
+class SvgCache:
+    """Efficient SVG caching to avoid repeated image loading."""
 
     def __init__(self):
         self._cache = {}
 
-    def get_font(self, font_path: str, size: int) -> ImageFont.FreeTypeFont:
-        """Get font from cache or create new one."""
-        key = (font_path, size)
-
+    def get_svg(self, svg_path: str, size: int) -> Image.Image:
+        """Get SVG rendered at specified size from cache or create new."""
+        key = (svg_path, size)
         if key not in self._cache:
-            self._cache[key] = ImageFont.truetype(font_path, size)
-
-        return self._cache[key]
+            svg_img = Image.open(svg_path).convert("RGBA")
+            self._cache[key] = svg_img.resize((size, size), Image.LANCZOS)
+        return self._cache[key].copy()
 
     def clear(self):
-        """Clear the font cache."""
+        """Clear the SVG cache."""
         self._cache.clear()
 
 
-# Global font cache instance
-_font_cache = FontCache()
+_svg_cache = SvgCache()
 
 
 class BasePattern(ABC):
-    """Abstract base class for all emoji patterns."""
+    """Abstract base class for all SVG patterns."""
 
     def __init__(self, config: dict):
         self.config = config
-        self.placed_emojis: List[EmojiBox] = []
+        self.placed_svgs: List[SvgBox] = []
 
     @abstractmethod
     def generate(
         self, image: Image.Image, draw: ImageDraw.Draw,
-        font: ImageFont.FreeTypeFont, emojis: List[str],
+        svg_path: str, svg_count: int,
         img_size: Tuple[int, int], scale_var: float
     ) -> None:
         """Generate the pattern on the image."""
         pass
 
-    def get_font(self, size: int) -> ImageFont.FreeTypeFont:
-        """Get font with specified size using cache."""
-        return _font_cache.get_font(self.config["font_path"], size)
+    def get_svg(self, size: int) -> Image.Image:
+        """Get SVG with specified size using cache."""
+        return _svg_cache.get_svg(self.config["svg_path"], size)
 
-    def place_emoji_safely(
-        self, emoji: str, x: int, y: int,
-        font: ImageFont.FreeTypeFont, img_size: Tuple[int, int],
+    def place_svg_safely(
+        self, x: int, y: int,
+        svg_size: int, img_size: Tuple[int, int],
         max_attempts: int = 50
     ) -> Optional[Tuple[int, int]]:
         """
-        Find a safe position for an emoji that doesn't overlap with existing ones.
-
-        Performance optimization: Use spatial partitioning for large numbers of emojis.
+        Find a safe position for an SVG that doesn't overlap with existing ones.
         """
-        bbox = font.getbbox(emoji)
-        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-
+        w, h = svg_size, svg_size
         for _ in range(max_attempts):
             safe_x = max(w//2, min(x, img_size[0] - w//2))
             safe_y = max(h//2, min(y, img_size[1] - h//2))
 
-            new_box = EmojiBox(safe_x - w//2, safe_y - h//2, w, h)
+            new_box = SvgBox(safe_x - w//2, safe_y - h//2, w, h)
 
-            # Performance optimization: early exit on first non-overlapping position
             if not any(
                 new_box.overlaps(existing, self.config.get("margin", 10))
-                for existing in self.placed_emojis
+                for existing in self.placed_svgs
             ):
-                self.placed_emojis.append(new_box)
+                self.placed_svgs.append(new_box)
                 return safe_x, safe_y
 
-            # Add some randomness to find alternative positions
             x += random.randint(-50, 50)
             y += random.randint(-50, 50)
 
         return None
 
-    def draw_emoji_with_rotation(
-        self, image: Image.Image, draw: ImageDraw.Draw,
-        emoji: str, x: int, y: int,
-        font: ImageFont.FreeTypeFont, color: Tuple[int, int, int],
+    def draw_svg_with_rotation(
+        self, image: Image.Image,
+        svg: Image.Image, x: int, y: int,
         rotation: int = 0
     ) -> None:
-        """Draw emoji with optional rotation."""
+        """Draw SVG with optional rotation."""
         if rotation == 0:
-            # Fast path for non-rotated emojis
-            bbox = font.getbbox(emoji)
-            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text((x - w // 2, y - h // 2), emoji, font=font, fill=color)
+            w, h = svg.size
+            paste_x = max(0, min(x - w//2, image.size[0] - w))
+            paste_y = max(0, min(y - h//2, image.size[1] - h))
+            if svg.mode == 'RGBA':
+                image.paste(svg, (paste_x, paste_y), svg)
+            else:
+                image.paste(svg, (paste_x, paste_y))
         else:
-            # Slower path for rotated emojis
-            bbox = font.getbbox(emoji)
-            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-
-            temp_size = max(w, h) + 40
-            temp_img = Image.new('RGBA', (temp_size, temp_size), (0, 0, 0, 0))
-            temp_draw = ImageDraw.Draw(temp_img)
-            temp_draw.text(
-                (temp_size//2 - w//2, temp_size//2 - h//2),
-                emoji, font=font, fill=color
-            )
-
-            rotated = temp_img.rotate(
-                rotation, expand=False,
-                resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0)
-            )
-
-            paste_x = max(0, min(x - temp_size//2, image.size[0] - temp_size))
-            paste_y = max(0, min(y - temp_size//2, image.size[1] - temp_size))
-
+            w, h = svg.size
+            rotated = svg.rotate(rotation, expand=False, resample=Image.BICUBIC)
+            paste_x = max(0, min(x - rotated.size[0]//2, image.size[0] - rotated.size[0]))
+            paste_y = max(0, min(y - rotated.size[1]//2, image.size[1] - rotated.size[1]))
             if rotated.mode == 'RGBA':
                 image.paste(rotated, (paste_x, paste_y), rotated)
-
             else:
                 image.paste(rotated, (paste_x, paste_y))
 
     def reset(self) -> None:
         """Reset the pattern state for reuse."""
-        self.placed_emojis.clear()
+        self.placed_svgs.clear()
 
 
 class MosaicPattern(BasePattern):
@@ -147,33 +123,25 @@ class MosaicPattern(BasePattern):
 
     def generate(
         self, image: Image.Image, draw: ImageDraw.Draw,
-        font: ImageFont.FreeTypeFont, emojis: List[str],
+        svg_path: str, svg_count: int,
         img_size: Tuple[int, int], scale_var: float
     ) -> None:
         attempts = 0
-        max_attempts = self.config["emoji_count"] * 10
+        max_attempts = svg_count * 10
 
-        while len(self.placed_emojis) < self.config["emoji_count"] and attempts < max_attempts:
-            emoji = random.choice(emojis)
+        while len(self.placed_svgs) < svg_count and attempts < max_attempts:
             x = random.randint(100, img_size[0] - 100)
             y = random.randint(100, img_size[1] - 100)
 
             size_factor = 0.5 + random.uniform(0, 1.5 * scale_var)
-            current_font = self.get_font(
-                size=int(self.config["font_size"] * size_factor)
-            )
+            size = int(self.config["svg_size"] * size_factor)
+            svg_img = self.get_svg(size)
 
-            safe_pos = self.place_emoji_safely(
-                emoji=emoji, x=x, y=y,
-                font=current_font, img_size=img_size
-            )
+            safe_pos = self.place_svg_safely(x, y, size, img_size)
 
             if safe_pos is not None:
                 safe_x, safe_y = safe_pos
-                self.draw_emoji_with_rotation(
-                    image=image, draw=draw, emoji=emoji, x=safe_x, y=safe_y,
-                    font=current_font, color=self.config["font_color"], rotation=0
-                )
+                self.draw_svg_with_rotation(image, svg_img, safe_x, safe_y, 0)
 
             attempts += 1
 
@@ -183,7 +151,7 @@ class LotusPattern(BasePattern):
 
     def generate(
         self, image: Image.Image, draw: ImageDraw.Draw,
-        font: ImageFont.FreeTypeFont, emojis: List[str],
+        svg_path: str, svg_count: int,
         img_size: Tuple[int, int], scale_var: float
     ) -> None:
         center_x, center_y = img_size[0] // 2, img_size[1] // 2
@@ -202,26 +170,16 @@ class LotusPattern(BasePattern):
                 y = center_y + distance * math.sin(current_angle)
 
                 if 50 <= x <= img_size[0] - 50 and 50 <= y <= img_size[1] - 50:
-                    emoji = random.choice(emojis)
                     size_factor = max(0.4, 1.2 - (i * 0.03)) + \
                         random.uniform(-scale_var*0.5, scale_var*0.5)
+                    size = int(self.config["svg_size"] * size_factor)
+                    svg_img = self.get_svg(size)
 
-                    current_font = self.get_font(
-                        size=int(self.config["font_size"] * size_factor)
-                    )
+                    safe_pos = self.place_svg_safely(x, y, size, img_size)
 
-                safe_pos = self.place_emoji_safely(
-                    emoji=emoji, x=x, y=y,
-                    font=current_font, img_size=img_size
-                )
-
-                if safe_pos is not None:
+                    if safe_pos is not None:
                         safe_x, safe_y = safe_pos
-
-                        self.draw_emoji_with_rotation(
-                            image=image, draw=draw, emoji=emoji, x=safe_x, y=safe_y,
-                            font=current_font, color=self.config["font_color"], rotation=0
-                        )
+                        self.draw_svg_with_rotation(image, svg_img, safe_x, safe_y, 0)
 
 
 class StackPattern(BasePattern):
@@ -229,7 +187,7 @@ class StackPattern(BasePattern):
 
     def generate(
         self, image: Image.Image, draw: ImageDraw.Draw,
-        font: ImageFont.FreeTypeFont, emojis: List[str],
+        svg_path: str, svg_count: int,
         img_size: Tuple[int, int], scale_var: float
     ) -> None:
         cols, rows = self.config["grid"]
@@ -237,29 +195,20 @@ class StackPattern(BasePattern):
 
         for row in range(rows):
             for col in range(cols):
-                emoji = random.choice(emojis)
-
                 base_x = col * cell_w + cell_w // 2
                 base_y = row * cell_h + cell_h // 2
 
                 if row % 2 == 1:
                     offset_x = base_x + cell_w // 2
-                    x = offset_x if offset_x < img_size[0] - \
-                        cell_w // 2 else base_x - cell_w // 2
+                    x = offset_x if offset_x < img_size[0] - cell_w // 2 else base_x - cell_w // 2
                 else:
                     x = base_x
 
-                size_factor = 1.0 + \
-                    random.uniform(-scale_var * 0.3, scale_var * 0.3)
+                size_factor = 1.0 + random.uniform(-scale_var * 0.3, scale_var * 0.3)
+                size = int(self.config["svg_size"] * size_factor)
+                svg_img = self.get_svg(size)
 
-                current_font = self.get_font(
-                    size=int(self.config["font_size"] * size_factor)
-                )
-
-                self.draw_emoji_with_rotation(
-                    image=image, draw=draw, emoji=emoji, x=x, y=base_y,
-                    font=current_font, color=self.config["font_color"], rotation=0
-                )
+                self.draw_svg_with_rotation(image, svg_img, x, base_y, 0)
 
 
 class SprinklePattern(BasePattern):
@@ -267,36 +216,26 @@ class SprinklePattern(BasePattern):
 
     def generate(
         self, image: Image.Image, draw: ImageDraw.Draw,
-        font: ImageFont.FreeTypeFont, emojis: List[str],
+        svg_path: str, svg_count: int,
         img_size: Tuple[int, int], scale_var: float
     ) -> None:
         attempts = 0
-        max_attempts = self.config["emoji_count"] * 15
+        max_attempts = svg_count * 15
 
-        while len(self.placed_emojis) < self.config["emoji_count"] and attempts < max_attempts:
-            emoji = random.choice(emojis)
-
+        while len(self.placed_svgs) < svg_count and attempts < max_attempts:
             x = random.randint(80, img_size[0] - 80)
             y = random.randint(80, img_size[1] - 80)
 
             size_factor = 0.6 + random.uniform(0, 1.0 + scale_var)
-            current_font = self.get_font(
-                size=int(self.config["font_size"] * size_factor)
-            )
+            size = int(self.config["svg_size"] * size_factor)
+            svg_img = self.get_svg(size)
 
-            safe_pos = self.place_emoji_safely(
-                emoji=emoji, x=x, y=y,
-                font=current_font, img_size=img_size
-            )
+            safe_pos = self.place_svg_safely(x, y, size, img_size)
 
             if safe_pos is not None:
                 safe_x, safe_y = safe_pos
                 rotation = random.randint(0, 360)
-
-                self.draw_emoji_with_rotation(
-                    image=image, draw=draw, emoji=emoji, x=safe_x, y=safe_y,
-                    font=current_font, color=self.config["font_color"], rotation=rotation
-                )
+                self.draw_svg_with_rotation(image, svg_img, safe_x, safe_y, rotation)
 
             attempts += 1
 
@@ -306,39 +245,30 @@ class PrismPattern(BasePattern):
 
     def generate(
         self, image: Image.Image, draw: ImageDraw.Draw,
-        font: ImageFont.FreeTypeFont, emojis: List[str],
+        svg_path: str, svg_count: int,
         img_size: Tuple[int, int], scale_var: float
     ) -> None:
         rows = 7
 
         for row in range(rows):
-            emoji_count = row + 2 if row <= rows // 2 else rows - row + 1
-            row_width = emoji_count * 140
+            svg_count_row = row + 2 if row <= rows // 2 else rows - row + 1
+            row_width = svg_count_row * 140
             start_x = (img_size[0] - row_width) // 2
             y = 120 + row * 130
 
-            for col in range(emoji_count):
-                emoji = random.choice(emojis)
+            for col in range(svg_count_row):
                 x = start_x + col * 140 + 70
 
                 size_factor = 0.8 + random.uniform(-scale_var, scale_var)
-                current_font = self.get_font(
-                    size=int(self.config["font_size"] * size_factor)
-                )
+                size = int(self.config["svg_size"] * size_factor)
+                svg_img = self.get_svg(size)
 
-                safe_pos = self.place_emoji_safely(
-                    emoji=emoji, x=x, y=y,
-                    font=current_font, img_size=img_size
-                )
+                safe_pos = self.place_svg_safely(x, y, size, img_size)
 
                 if safe_pos is not None:
                     safe_x, safe_y = safe_pos
                     rotation = random.randint(-30, 30)
-
-                    self.draw_emoji_with_rotation(
-                        image=image, draw=draw, emoji=emoji, x=safe_x, y=safe_y,
-                        font=current_font, color=self.config["font_color"], rotation=rotation
-                    )
+                    self.draw_svg_with_rotation(image, svg_img, safe_x, safe_y, rotation)
 
 
 class PatternFactory:
@@ -348,21 +278,13 @@ class PatternFactory:
     def create_pattern(cls, pattern: 'Pattern', config: dict) -> BasePattern:
         """Create a pattern instance from Pattern enum."""
         if not isinstance(pattern, Pattern):
-            raise TypeError(
-                f"pattern must be Pattern enum, got {type(pattern)}")
+            raise TypeError(f"pattern must be Pattern enum, got {type(pattern)}")
         return pattern.create(config)
 
     @classmethod
     def get_available_patterns(cls) -> List['Pattern']:
         """Get list of available Pattern enums."""
         return list(Pattern)
-
-    @classmethod
-    def register_pattern(cls, pattern_enum: 'Pattern') -> None:
-        """Register a new pattern enum (for extensibility)."""
-        if not isinstance(pattern_enum, Pattern):
-            raise TypeError("pattern_enum must be Pattern enum")
-        # Pattern enums are registered automatically via the enum definition
 
 
 class Pattern(Enum):
