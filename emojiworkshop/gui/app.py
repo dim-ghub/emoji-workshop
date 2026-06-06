@@ -10,7 +10,7 @@ from PIL import Image, ImageTk
 import random
 import threading
 import os
-from typing import Tuple
+from typing import Tuple, Optional, List
 import time
 
 from emojiworkshop.core.pattern import Pattern
@@ -25,6 +25,89 @@ UI_FONT_PATH = "assets/GoogleSansCode-Regular.ttf"
 DEFAULT_SVG_PATH = "assets/caelestia.svg"
 
 
+class ColorPickerDialog(ctk.CTkToplevel):
+    def __init__(self, parent, title="Pick Color", initial_color=None):
+        super().__init__(parent)
+        self.title(title)
+        self.transient(parent)
+        self.grab_set()
+        
+        self.result = initial_color or (128, 128, 128)
+        
+        self.frame = ctk.CTkFrame(self)
+        self.frame.pack(padx=20, pady=20)
+        
+        self.color_preview = ctk.CTkFrame(self.frame, width=100, height=40, corner_radius=8)
+        self.color_preview.pack(pady=10)
+        self.update_preview()
+        
+        ctk.CTkLabel(self.frame, text="Hex:").pack()
+        self.hex_var = ctk.StringVar(value=self.rgb_to_hex(self.result))
+        self.hex_entry = ctk.CTkEntry(self.frame, textvariable=self.hex_var, width=150)
+        self.hex_entry.pack(pady=5)
+        self.hex_entry.bind("<KeyRelease>", self.on_hex_change)
+        
+        ctk.CTkLabel(self.frame, text="R:").pack()
+        self.r_var = ctk.IntVar(value=self.result[0])
+        ctk.CTkEntry(self.frame, textvariable=self.r_var, width=150).pack(pady=2)
+        self.r_var.trace_add("write", lambda *a: self.on_rgb_change())
+        
+        ctk.CTkLabel(self.frame, text="G:").pack()
+        self.g_var = ctk.IntVar(value=self.result[1])
+        ctk.CTkEntry(self.frame, textvariable=self.g_var, width=150).pack(pady=2)
+        self.g_var.trace_add("write", lambda *a: self.on_rgb_change())
+        
+        ctk.CTkLabel(self.frame, text="B:").pack()
+        self.b_var = ctk.IntVar(value=self.result[2])
+        ctk.CTkEntry(self.frame, textvariable=self.b_var, width=150).pack(pady=2)
+        self.b_var.trace_add("write", lambda *a: self.on_rgb_change())
+        
+        btn_frame = ctk.CTkFrame(self.frame)
+        btn_frame.pack(pady=15)
+        ctk.CTkButton(btn_frame, text="Cancel", command=self.cancel).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="OK", command=self.ok).pack(side="left", padx=5)
+    
+    def on_hex_change(self, event=None):
+        try:
+            hex_val = self.hex_var.get().lstrip('#')
+            if len(hex_val) == 6:
+                r = int(hex_val[0:2], 16)
+                g = int(hex_val[2:4], 16)
+                b = int(hex_val[4:6], 16)
+                self.r_var.set(r)
+                self.g_var.set(g)
+                self.b_var.set(b)
+                self.result = (r, g, b)
+                self.update_preview()
+        except:
+            pass
+    
+    def on_rgb_change(self):
+        try:
+            r = max(0, min(255, self.r_var.get()))
+            g = max(0, min(255, self.g_var.get()))
+            b = max(0, min(255, self.b_var.get()))
+            self.result = (r, g, b)
+            self.hex_var.set(self.rgb_to_hex(self.result))
+            self.update_preview()
+        except:
+            pass
+    
+    def update_preview(self):
+        hex_color = self.rgb_to_hex(self.result)
+        self.color_preview.configure(fg_color=hex_color)
+    
+    def rgb_to_hex(self, rgb):
+        return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+    
+    def ok(self):
+        self.destroy()
+    
+    def cancel(self):
+        self.result = None
+        self.destroy()
+
+
 class WorkshopGUI:
     """Advanced GUI with sidebar layout for SVG wallpapers."""
 
@@ -37,6 +120,15 @@ class WorkshopGUI:
         self.selected_svg = DEFAULT_SVG_PATH
         self.selected_pattern = Pattern.MOSAIC
         self.selected_color = ColorPalettes.GRAY
+        self.use_gradient_bg = ctk.BooleanVar(value=False)
+        self.bg_gradient_start = (30, 30, 50)
+        self.bg_gradient_end = (80, 20, 80)
+        self.gradient_direction = ctk.StringVar(value="vertical")
+        self.use_svg_tint = ctk.BooleanVar(value=False)
+        self.svg_tint_color = (255, 255, 255)
+        self.use_svg_gradient = ctk.BooleanVar(value=False)
+        self.svg_gradient_start = (255, 100, 100)
+        self.svg_gradient_end = (100, 100, 255)
         self.current_config = None
         self.generation_in_progress = False
 
@@ -162,21 +254,19 @@ class WorkshopGUI:
         except Exception:
             ui_font = ctk.CTkFont(size=20, weight="bold")
 
-        title_label = ctk.CTkLabel(
-            self.sidebar,
-            text="SVG Workshop",
-            font=ui_font
-        )
+        title_label = ctk.CTkLabel(self.sidebar, text="SVG Workshop", font=ui_font)
         title_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
         self.setup_quick_actions()
         self.setup_svg_section()
+        self.setup_background_section()
+        self.setup_tint_section()
         self.setup_pattern_section()
         self.setup_color_section()
         self.setup_advanced_settings()
 
     def setup_quick_actions(self):
-        """Set up quick action buttons with enhanced styling."""
+        """Set up quick action buttons."""
         actions_frame = ctk.CTkFrame(
             self.sidebar,
             fg_color=("gray88", "gray17"),
@@ -188,30 +278,18 @@ class WorkshopGUI:
         actions_frame.grid_columnconfigure((0, 1), weight=1)
 
         self.randomize_btn = ctk.CTkButton(
-            actions_frame,
-            text="Random",
-            command=self.randomize_selection,
-            font=ctk.CTkFont(weight="bold"),
-            height=40,
-            corner_radius=10,
-            fg_color=("gray70", "gray35"),
-            hover_color=("gray60", "gray45"),
-            border_width=2,
-            border_color=("gray60", "gray40")
+            actions_frame, text="Random", command=self.randomize_selection,
+            font=ctk.CTkFont(weight="bold"), height=40, corner_radius=10,
+            fg_color=("gray70", "gray35"), hover_color=("gray60", "gray45"),
+            border_width=2, border_color=("gray60", "gray40")
         )
         self.randomize_btn.grid(row=0, column=0, padx=8, pady=8, sticky="ew")
 
         self.generate_btn = ctk.CTkButton(
-            actions_frame,
-            text="Generate",
-            command=self.generate_wallpaper,
-            font=ctk.CTkFont(weight="bold"),
-            height=40,
-            corner_radius=10,
-            fg_color=("#2E7D32", "#4CAF50"),
-            hover_color=("#1B5E20", "#66BB6A"),
-            border_width=2,
-            border_color=("#388E3C", "#4CAF50")
+            actions_frame, text="Generate", command=self.generate_wallpaper,
+            font=ctk.CTkFont(weight="bold"), height=40, corner_radius=10,
+            fg_color=("#2E7D32", "#4CAF50"), hover_color=("#1B5E20", "#66BB6A"),
+            border_width=2, border_color=("#388E3C", "#4CAF50")
         )
         self.generate_btn.grid(row=0, column=1, padx=8, pady=8, sticky="ew")
 
@@ -223,19 +301,13 @@ class WorkshopGUI:
             ui_font = ctk.CTkFont(size=16, weight="bold")
 
         svg_label = ctk.CTkLabel(
-            self.sidebar,
-            text="SVG Source",
-            font=ui_font,
-            text_color=("gray20", "gray80")
+            self.sidebar, text="SVG Source", font=ui_font, text_color=("gray20", "gray80")
         )
         svg_label.grid(row=2, column=0, padx=20, pady=(20, 5), sticky="w")
 
         svg_frame = ctk.CTkFrame(
-            self.sidebar,
-            fg_color=("gray88", "gray17"),
-            corner_radius=12,
-            border_width=2,
-            border_color=("gray75", "gray28")
+            self.sidebar, fg_color=("gray88", "gray17"),
+            corner_radius=12, border_width=2, border_color=("gray75", "gray28")
         )
         svg_frame.grid(row=3, column=0, sticky="ew", padx=15, pady=5)
         svg_frame.grid_columnconfigure(0, weight=1)
@@ -246,12 +318,156 @@ class WorkshopGUI:
             instruction_font = ctk.CTkFont(size=10)
 
         self.svg_path_label = ctk.CTkLabel(
-            svg_frame,
-            text=self.selected_svg,
-            font=instruction_font,
-            text_color=("gray50", "gray60")
+            svg_frame, text=self.selected_svg, font=instruction_font, text_color=("gray50", "gray60")
         )
         self.svg_path_label.grid(row=0, column=0, padx=15, pady=15, sticky="ew")
+
+    def setup_background_section(self):
+        """Set up background gradient options."""
+        try:
+            ui_font = ctk.CTkFont(family="GoogleSansCode", size=16, weight="bold")
+        except Exception:
+            ui_font = ctk.CTkFont(size=16, weight="bold")
+
+        bg_label = ctk.CTkLabel(
+            self.sidebar, text="Background", font=ui_font, text_color=("gray20", "gray80")
+        )
+        bg_label.grid(row=4, column=0, padx=20, pady=(20, 5), sticky="w")
+
+        bg_frame = ctk.CTkFrame(
+            self.sidebar, fg_color=("gray88", "gray17"),
+            corner_radius=12, border_width=2, border_color=("gray75", "gray28")
+        )
+        bg_frame.grid(row=5, column=0, sticky="ew", padx=15, pady=5)
+        bg_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkCheckBox(
+            bg_frame, text="Use Gradient Background", variable=self.use_gradient_bg,
+            command=self.schedule_background_update
+        ).grid(row=0, column=0, padx=15, pady=(10, 5), sticky="w")
+
+        direction_frame = ctk.CTkFrame(bg_frame, fg_color="transparent")
+        direction_frame.grid(row=1, column=0, padx=15, pady=5, sticky="w")
+        direction_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+        ctk.CTkLabel(direction_frame, text="Direction:").grid(row=0, column=0, sticky="w")
+        self.gradient_dir_menu = ctk.CTkOptionMenu(
+            direction_frame, values=["vertical", "horizontal", "diagonal"],
+            variable=self.gradient_direction, width=100,
+            command=lambda _: self.schedule_background_update()
+        )
+        self.gradient_dir_menu.grid(row=0, column=1, padx=5)
+
+        gradient_color_frame = ctk.CTkFrame(bg_frame, fg_color="transparent")
+        gradient_color_frame.grid(row=2, column=0, padx=15, pady=5, sticky="ew")
+        gradient_color_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        ctk.CTkLabel(gradient_color_frame, text="From:").grid(row=0, column=0, sticky="w")
+        self.bg_gradient_start_btn = ctk.CTkButton(
+            gradient_color_frame, text="", width=40, height=25, corner_radius=5,
+            fg_color=self.rgb_to_hex(self.bg_gradient_start),
+            command=lambda: self.pick_color("bg_gradient_start")
+        )
+        self.bg_gradient_start_btn.grid(row=0, column=1, padx=5)
+
+        ctk.CTkLabel(gradient_color_frame, text="To:").grid(row=0, column=2, padx=(10, 0), sticky="w")
+        self.bg_gradient_end_btn = ctk.CTkButton(
+            gradient_color_frame, text="", width=40, height=25, corner_radius=5,
+            fg_color=self.rgb_to_hex(self.bg_gradient_end),
+            command=lambda: self.pick_color("bg_gradient_end")
+        )
+        self.bg_gradient_end_btn.grid(row=0, column=3, padx=5)
+
+    def setup_tint_section(self):
+        """Set up SVG tint/color options."""
+        try:
+            ui_font = ctk.CTkFont(family="GoogleSansCode", size=16, weight="bold")
+        except Exception:
+            ui_font = ctk.CTkFont(size=16, weight="bold")
+
+        tint_label = ctk.CTkLabel(
+            self.sidebar, text="SVG Color", font=ui_font, text_color=("gray20", "gray80")
+        )
+        tint_label.grid(row=10, column=0, padx=20, pady=(20, 5), sticky="w")
+
+        tint_frame = ctk.CTkFrame(
+            self.sidebar, fg_color=("gray88", "gray17"),
+            corner_radius=12, border_width=2, border_color=("gray75", "gray28")
+        )
+        tint_frame.grid(row=11, column=0, sticky="ew", padx=15, pady=5)
+        tint_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkCheckBox(
+            tint_frame, text="Use Solid Tint", variable=self.use_svg_tint,
+            command=self.schedule_background_update
+        ).grid(row=0, column=0, padx=15, pady=(10, 5), sticky="w")
+
+        self.svg_tint_btn = ctk.CTkButton(
+            tint_frame, text="", width=60, height=30, corner_radius=5,
+            fg_color=self.rgb_to_hex(self.svg_tint_color),
+            command=lambda: self.pick_color("svg_tint")
+        )
+        self.svg_tint_btn.grid(row=1, column=0, padx=15, pady=5)
+
+        ctk.CTkCheckBox(
+            tint_frame, text="Use SVG Gradient", variable=self.use_svg_gradient,
+            command=self.schedule_background_update
+        ).grid(row=2, column=0, padx=15, pady=(10, 5), sticky="w")
+
+        svg_grad_frame = ctk.CTkFrame(tint_frame, fg_color="transparent")
+        svg_grad_frame.grid(row=3, column=0, padx=15, pady=5, sticky="ew")
+        svg_grad_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        ctk.CTkLabel(svg_grad_frame, text="From:").grid(row=0, column=0, sticky="w")
+        self.svg_grad_start_btn = ctk.CTkButton(
+            svg_grad_frame, text="", width=40, height=25, corner_radius=5,
+            fg_color=self.rgb_to_hex(self.svg_gradient_start),
+            command=lambda: self.pick_color("svg_grad_start")
+        )
+        self.svg_grad_start_btn.grid(row=0, column=1, padx=5)
+
+        ctk.CTkLabel(svg_grad_frame, text="To:").grid(row=0, column=2, padx=(10, 0), sticky="w")
+        self.svg_grad_end_btn = ctk.CTkButton(
+            svg_grad_frame, text="", width=40, height=25, corner_radius=5,
+            fg_color=self.rgb_to_hex(self.svg_gradient_end),
+            command=lambda: self.pick_color("svg_grad_end")
+        )
+        self.svg_grad_end_btn.grid(row=0, column=3, padx=5)
+
+    def pick_color(self, target: str):
+        """Open color picker dialog."""
+        current = None
+        if target == "bg_gradient_start":
+            current = self.bg_gradient_start
+        elif target == "bg_gradient_end":
+            current = self.bg_gradient_end
+        elif target == "svg_tint":
+            current = self.svg_tint_color
+        elif target == "svg_grad_start":
+            current = self.svg_gradient_start
+        elif target == "svg_grad_end":
+            current = self.svg_gradient_end
+
+        dialog = ColorPickerDialog(self.root, "Pick Color", current)
+        self.root.wait_window(dialog)
+
+        if dialog.result:
+            if target == "bg_gradient_start":
+                self.bg_gradient_start = dialog.result
+                self.bg_gradient_start_btn.configure(fg_color=self.rgb_to_hex(dialog.result))
+            elif target == "bg_gradient_end":
+                self.bg_gradient_end = dialog.result
+                self.bg_gradient_end_btn.configure(fg_color=self.rgb_to_hex(dialog.result))
+            elif target == "svg_tint":
+                self.svg_tint_color = dialog.result
+                self.svg_tint_btn.configure(fg_color=self.rgb_to_hex(dialog.result))
+            elif target == "svg_grad_start":
+                self.svg_gradient_start = dialog.result
+                self.svg_grad_start_btn.configure(fg_color=self.rgb_to_hex(dialog.result))
+            elif target == "svg_grad_end":
+                self.svg_gradient_end = dialog.result
+                self.svg_grad_end_btn.configure(fg_color=self.rgb_to_hex(dialog.result))
+            self.schedule_background_update()
 
     def setup_pattern_section(self):
         """Set up pattern selection with previews."""
@@ -261,21 +477,15 @@ class WorkshopGUI:
             ui_font = ctk.CTkFont(size=16, weight="bold")
 
         pattern_label = ctk.CTkLabel(
-            self.sidebar,
-            text="Patterns",
-            font=ui_font,
-            text_color=("gray20", "gray80")
+            self.sidebar, text="Patterns", font=ui_font, text_color=("gray20", "gray80")
         )
-        pattern_label.grid(row=4, column=0, padx=20, pady=(20, 5), sticky="w")
+        pattern_label.grid(row=20, column=0, padx=20, pady=(20, 5), sticky="w")
 
         patterns_frame = ctk.CTkFrame(
-            self.sidebar,
-            fg_color=("gray88", "gray17"),
-            corner_radius=12,
-            border_width=2,
-            border_color=("gray75", "gray28")
+            self.sidebar, fg_color=("gray88", "gray17"),
+            corner_radius=12, border_width=2, border_color=("gray75", "gray28")
         )
-        patterns_frame.grid(row=5, column=0, sticky="ew", padx=15, pady=5)
+        patterns_frame.grid(row=21, column=0, sticky="ew", padx=15, pady=5)
         patterns_frame.grid_columnconfigure((0, 1), weight=1)
 
         patterns = [
@@ -289,23 +499,15 @@ class WorkshopGUI:
             row, col = divmod(i, 2)
 
             pattern_frame = ctk.CTkFrame(
-                patterns_frame,
-                corner_radius=10,
-                fg_color=("white", "gray20"),
-                border_width=2,
-                border_color=("gray70", "gray35")
+                patterns_frame, corner_radius=10, fg_color=("white", "gray20"),
+                border_width=2, border_color=("gray70", "gray35")
             )
             pattern_frame.grid(row=row, column=col, padx=8, pady=8, sticky="ew")
             pattern_frame.grid_columnconfigure(0, weight=1)
 
             preview_label = ctk.CTkLabel(
-                pattern_frame,
-                text="...",
-                width=135,
-                height=85,
-                fg_color=("gray95", "gray25"),
-                corner_radius=8,
-                font=ctk.CTkFont(size=24)
+                pattern_frame, text="...", width=135, height=85,
+                fg_color=("gray95", "gray25"), corner_radius=8, font=ctk.CTkFont(size=24)
             )
             preview_label.grid(row=0, column=0, padx=8, pady=(8, 4))
 
@@ -315,16 +517,10 @@ class WorkshopGUI:
                 btn_font = ctk.CTkFont(size=11, weight="bold")
 
             btn = ctk.CTkButton(
-                pattern_frame,
-                text=name,
-                command=lambda p=pattern: self.select_pattern(p),
-                height=32,
-                corner_radius=8,
-                font=btn_font,
-                fg_color=("gray75", "gray30"),
-                hover_color=("gray65", "gray40"),
-                border_width=1,
-                border_color=("gray60", "gray35")
+                pattern_frame, text=name, command=lambda p=pattern: self.select_pattern(p),
+                height=32, corner_radius=8, font=btn_font,
+                fg_color=("gray75", "gray30"), hover_color=("gray65", "gray40"),
+                border_width=1, border_color=("gray60", "gray35")
             )
             btn.grid(row=1, column=0, padx=8, pady=(4, 8), sticky="ew")
 
@@ -339,15 +535,11 @@ class WorkshopGUI:
         except Exception:
             ui_font = ctk.CTkFont(size=16, weight="bold")
 
-        color_label = ctk.CTkLabel(
-            self.sidebar,
-            text="Colors",
-            font=ui_font
-        )
-        color_label.grid(row=6, column=0, padx=20, pady=(20, 5), sticky="w")
+        color_label = ctk.CTkLabel(self.sidebar, text="Colors", font=ui_font)
+        color_label.grid(row=30, column=0, padx=20, pady=(20, 5), sticky="w")
 
         colors_frame = ctk.CTkFrame(self.sidebar)
-        colors_frame.grid(row=7, column=0, sticky="ew", padx=15, pady=5)
+        colors_frame.grid(row=31, column=0, sticky="ew", padx=15, pady=5)
         colors_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         for i, (name, palette) in enumerate(self.color_options.items()):
@@ -357,17 +549,10 @@ class WorkshopGUI:
             fg_color = self.rgb_to_hex(palette.foreground)
 
             btn = ctk.CTkButton(
-                colors_frame,
-                text="S",
-                command=lambda p=palette: self.select_color(p),
-                width=60,
-                height=60,
-                corner_radius=30,
-                fg_color=bg_color,
+                colors_frame, text="S", command=lambda p=palette: self.select_color(p),
+                width=60, height=60, corner_radius=30, fg_color=bg_color,
                 hover_color=self.adjust_color_brightness(bg_color, 0.8),
-                border_width=3,
-                border_color=fg_color,
-                text_color=fg_color,
+                border_width=3, border_color=fg_color, text_color=fg_color,
                 font=ctk.CTkFont(size=18)
             )
             btn.grid(row=row, column=col, padx=3, pady=3)
@@ -377,7 +562,7 @@ class WorkshopGUI:
         self.update_color_buttons()
 
     def setup_advanced_settings(self):
-        """Set up advanced settings section with custom resolution."""
+        """Set up advanced settings section."""
         try:
             ui_font = ctk.CTkFont(family="GoogleSansCode", size=16, weight="bold")
             label_font = ctk.CTkFont(family="GoogleSansCode", size=12)
@@ -387,27 +572,19 @@ class WorkshopGUI:
             label_font = ctk.CTkFont(size=12)
             value_font = ctk.CTkFont(size=11)
 
-        settings_label = ctk.CTkLabel(
-            self.sidebar,
-            text="Settings",
-            font=ui_font
-        )
-        settings_label.grid(row=8, column=0, padx=20, pady=(20, 5), sticky="w")
+        settings_label = ctk.CTkLabel(self.sidebar, text="Settings", font=ui_font)
+        settings_label.grid(row=40, column=0, padx=20, pady=(20, 5), sticky="w")
 
         settings_frame = ctk.CTkFrame(self.sidebar)
-        settings_frame.grid(row=9, column=0, sticky="ew", padx=15, pady=5)
+        settings_frame.grid(row=41, column=0, sticky="ew", padx=15, pady=5)
         settings_frame.grid_columnconfigure(1, weight=1)
 
         count_label = ctk.CTkLabel(settings_frame, text="Count:", font=label_font)
         count_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
 
         self.count_slider = ctk.CTkSlider(
-            settings_frame,
-            from_=50,
-            to=500,
-            number_of_steps=45,
-            variable=self.count_var,
-            command=self.on_setting_change
+            settings_frame, from_=50, to=500, number_of_steps=45,
+            variable=self.count_var, command=self.on_setting_change
         )
         self.count_slider.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
 
@@ -418,12 +595,8 @@ class WorkshopGUI:
         scale_label.grid(row=1, column=0, padx=10, pady=5, sticky="w")
 
         self.scale_slider = ctk.CTkSlider(
-            settings_frame,
-            from_=0.1,
-            to=2.0,
-            number_of_steps=19,
-            variable=self.scale_var,
-            command=self.on_setting_change
+            settings_frame, from_=0.1, to=2.0, number_of_steps=19,
+            variable=self.scale_var, command=self.on_setting_change
         )
         self.scale_slider.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
 
@@ -434,12 +607,8 @@ class WorkshopGUI:
         svg_size_label.grid(row=2, column=0, padx=10, pady=5, sticky="w")
 
         self.svg_size_slider = ctk.CTkSlider(
-            settings_frame,
-            from_=24,
-            to=200,
-            number_of_steps=44,
-            variable=self.svg_size_var,
-            command=self.on_setting_change
+            settings_frame, from_=24, to=200, number_of_steps=44,
+            variable=self.svg_size_var, command=self.on_setting_change
         )
         self.svg_size_slider.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
 
@@ -450,13 +619,9 @@ class WorkshopGUI:
         res_label.grid(row=3, column=0, padx=10, pady=5, sticky="w")
 
         self.resolution_menu = ctk.CTkOptionMenu(
-            settings_frame,
-            values=["1920x1080", "2560x1440", "3840x2160", "1366x768", "Custom"],
-            variable=self.resolution_var,
-            command=self.on_resolution_change,
-            width=120,
-            height=25,
-            font=value_font
+            settings_frame, values=["1920x1080", "2560x1440", "3840x2160", "1366x768", "Custom"],
+            variable=self.resolution_var, command=self.on_resolution_change,
+            width=120, height=25, font=value_font
         )
         self.resolution_menu.grid(row=3, column=1, columnspan=2, padx=10, pady=5, sticky="w")
 
@@ -469,10 +634,7 @@ class WorkshopGUI:
         width_label.grid(row=0, column=0, padx=5, pady=5)
 
         self.width_entry = ctk.CTkEntry(
-            self.custom_res_frame,
-            textvariable=self.custom_width_var,
-            width=80,
-            font=value_font
+            self.custom_res_frame, textvariable=self.custom_width_var, width=80, font=value_font
         )
         self.width_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
@@ -480,10 +642,7 @@ class WorkshopGUI:
         height_label.grid(row=0, column=2, padx=5, pady=5)
 
         self.height_entry = ctk.CTkEntry(
-            self.custom_res_frame,
-            textvariable=self.custom_height_var,
-            width=80,
-            font=value_font
+            self.custom_res_frame, textvariable=self.custom_height_var, width=80, font=value_font
         )
         self.height_entry.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
 
@@ -493,46 +652,34 @@ class WorkshopGUI:
     def setup_main_area(self):
         """Set up the main preview area."""
         self.main_frame = ctk.CTkFrame(
-            self.root,
-            corner_radius=15,
-            fg_color=("gray90", "gray15"),
-            border_width=2,
-            border_color=("gray75", "gray25")
+            self.root, corner_radius=15, fg_color=("gray90", "gray15"),
+            border_width=2, border_color=("gray75", "gray25")
         )
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(0, weight=1)
 
         self.preview_frame = ctk.CTkFrame(
-            self.main_frame,
-            corner_radius=12,
-            fg_color=("white", "gray10"),
-            border_width=3,
-            border_color=("gray70", "gray30")
+            self.main_frame, corner_radius=12, fg_color=("white", "gray10"),
+            border_width=3, border_color=("gray70", "gray30")
         )
         self.preview_frame.grid(row=0, column=0, sticky="nsew", padx=15, pady=15)
         self.preview_frame.grid_columnconfigure(0, weight=1)
         self.preview_frame.grid_rowconfigure(0, weight=1)
 
         self.canvas = ctk.CTkCanvas(
-            self.preview_frame,
-            highlightthickness=0,
+            self.preview_frame, highlightthickness=0,
             bg=("white" if ctk.get_appearance_mode() == "Light" else "#1a1a1a")
         )
         self.canvas.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
 
         self.loading_frame = ctk.CTkFrame(
-            self.preview_frame,
-            fg_color=("gray92", "gray18"),
-            corner_radius=10,
-            border_width=2,
-            border_color=("gray80", "gray25")
+            self.preview_frame, fg_color=("gray92", "gray18"),
+            corner_radius=10, border_width=2, border_color=("gray80", "gray25")
         )
         self.loading_label = ctk.CTkLabel(
-            self.loading_frame,
-            text="Generating preview...",
-            font=ctk.CTkFont(size=18, weight="bold"),
-            text_color=("gray30", "gray70")
+            self.loading_frame, text="Generating preview...",
+            font=ctk.CTkFont(size=18, weight="bold"), text_color=("gray30", "gray70")
         )
         self.loading_label.pack(pady=25, padx=25)
         self.loading_frame.place_forget()
@@ -544,11 +691,7 @@ class WorkshopGUI:
         self.status_frame.grid_propagate(False)
         self.status_frame.grid_columnconfigure(0, weight=1)
 
-        self.status_label = ctk.CTkLabel(
-            self.status_frame,
-            text="Ready",
-            font=ctk.CTkFont(size=12)
-        )
+        self.status_label = ctk.CTkLabel(self.status_frame, text="Ready", font=ctk.CTkFont(size=12))
         self.status_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
 
         self.progress_bar = ctk.CTkProgressBar(self.status_frame, width=200)
@@ -581,35 +724,26 @@ class WorkshopGUI:
                         print(f"Preview generation failed for {pat}: {e}")
                         self.root.after(0, lambda p=pat: self.set_pattern_preview_error(p))
 
-                threading.Thread(
-                    target=create_preview,
-                    args=(preview_config, pattern),
-                    daemon=True
-                ).start()
+                threading.Thread(target=create_preview, args=(preview_config, pattern), daemon=True).start()
 
             except Exception as e:
                 print(f"Failed to create preview for {pattern}: {e}")
                 self.set_pattern_preview_error(pattern)
 
     def set_pattern_preview_error(self, pattern: Pattern):
-        """Set error state for pattern preview."""
         try:
             if pattern in self.pattern_buttons:
-                preview_label = self.pattern_buttons[pattern]["preview"]
-                preview_label.configure(text="X", font=ctk.CTkFont(size=20))
+                self.pattern_buttons[pattern]["preview"].configure(text="X", font=ctk.CTkFont(size=20))
         except Exception as e:
             print(f"Failed to set error state for {pattern}: {e}")
 
     def load_pattern_preview(self, pattern: Pattern, filename: str):
-        """Load a pattern preview image."""
         try:
             if not os.path.exists(filename):
-                print(f"Preview file not found: {filename}")
                 self.set_pattern_preview_error(pattern)
                 return
 
             if pattern not in self.pattern_buttons:
-                print(f"Pattern button not found: {pattern}")
                 return
 
             image = Image.open(filename)
@@ -630,7 +764,6 @@ class WorkshopGUI:
             self.set_pattern_preview_error(pattern)
 
     def on_resolution_change(self, value):
-        """Handle resolution dropdown change."""
         if value == "Custom":
             self.use_custom_resolution.set(True)
             self.custom_res_frame.grid()
@@ -640,44 +773,35 @@ class WorkshopGUI:
         self.schedule_background_update()
 
     def on_custom_resolution_change(self, event=None):
-        """Handle custom resolution input changes."""
         if hasattr(self, '_res_update_timer'):
             self.root.after_cancel(self._res_update_timer)
-
         self._res_update_timer = self.root.after(800, self.schedule_background_update)
 
     def get_current_resolution(self):
-        """Get the current resolution as (width, height)."""
         if self.use_custom_resolution.get():
             try:
-                width = max(100, self.custom_width_var.get())
-                height = max(100, self.custom_height_var.get())
-                return (width, height)
+                return (max(100, self.custom_width_var.get()), max(100, self.custom_height_var.get()))
             except Exception:
                 return (1920, 1080)
         else:
             res_str = self.resolution_var.get()
             if "x" in res_str:
                 try:
-                    width, height = map(int, res_str.split('x'))
-                    return (width, height)
+                    return tuple(map(int, res_str.split('x')))
                 except Exception:
                     return (1920, 1080)
             return (1920, 1080)
 
     def rgb_to_hex(self, rgb_tuple: Tuple[int, int, int]) -> str:
-        """Convert RGB tuple to hex color string."""
         return f"#{rgb_tuple[0]:02x}{rgb_tuple[1]:02x}{rgb_tuple[2]:02x}"
 
     def adjust_color_brightness(self, hex_color: str, factor: float) -> str:
-        """Adjust brightness of a hex color."""
         hex_color = hex_color.lstrip('#')
         rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
         rgb = tuple(max(0, min(255, int(c * factor))) for c in rgb)
         return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
     def update_pattern_buttons(self):
-        """Update pattern button styling."""
         for pattern, widgets in self.pattern_buttons.items():
             button = widgets["button"]
             if pattern == self.selected_pattern:
@@ -686,7 +810,6 @@ class WorkshopGUI:
                 button.configure(fg_color=("gray85", "gray20"), border_width=0)
 
     def update_color_buttons(self):
-        """Update color button styling."""
         for palette, button in self.color_buttons.items():
             if palette == self.selected_color:
                 button.configure(border_width=4)
@@ -694,46 +817,47 @@ class WorkshopGUI:
                 button.configure(border_width=3)
 
     def select_pattern(self, pattern: Pattern):
-        """Select a pattern."""
         self.selected_pattern = pattern
         self.update_pattern_buttons()
         self.schedule_background_update()
 
     def select_color(self, color_palette):
-        """Select a color palette."""
         self.selected_color = color_palette
         self.update_color_buttons()
         self.schedule_background_update()
 
     def on_setting_change(self, value):
-        """Handle setting changes."""
         self.count_value_label.configure(text=str(int(self.count_var.get())))
         self.scale_value_label.configure(text=f"{self.scale_var.get():.1f}")
         self.svg_size_value_label.configure(text=str(int(self.svg_size_var.get())))
         self.schedule_background_update()
 
     def randomize_selection(self):
-        """Randomize all selections."""
         self.selected_pattern = random.choice(list(Pattern))
         self.selected_color = random.choice(list(self.color_options.values()))
-
+        self.bg_gradient_start = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        self.bg_gradient_end = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        self.svg_tint_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        self.svg_gradient_start = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        self.svg_gradient_end = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        self.bg_gradient_start_btn.configure(fg_color=self.rgb_to_hex(self.bg_gradient_start))
+        self.bg_gradient_end_btn.configure(fg_color=self.rgb_to_hex(self.bg_gradient_end))
+        self.svg_tint_btn.configure(fg_color=self.rgb_to_hex(self.svg_tint_color))
+        self.svg_grad_start_btn.configure(fg_color=self.rgb_to_hex(self.svg_gradient_start))
+        self.svg_grad_end_btn.configure(fg_color=self.rgb_to_hex(self.svg_gradient_end))
         self.count_var.set(random.randint(100, 400))
         self.scale_var.set(round(random.uniform(0.3, 1.5), 1))
-
         self.update_pattern_buttons()
         self.update_color_buttons()
         self.on_setting_change(None)
         self.schedule_background_update()
 
     def schedule_background_update(self):
-        """Schedule background update with debouncing."""
         if hasattr(self, '_update_timer'):
             self.root.after_cancel(self._update_timer)
-
         self._update_timer = self.root.after(400, self.update_background)
 
     def update_background(self):
-        """Update background preview."""
         if self.generation_in_progress:
             return
 
@@ -760,6 +884,15 @@ class WorkshopGUI:
                 "output_filename": f"main_preview_{id(self)}.png"
             }
 
+            if self.use_gradient_bg.get():
+                config["bg_gradient"] = [self.bg_gradient_start, self.bg_gradient_end]
+
+            if self.use_svg_tint.get():
+                config["tint_color"] = self.svg_tint_color
+
+            if self.use_svg_gradient.get():
+                config["svg_gradient"] = [self.svg_gradient_start, self.svg_gradient_end]
+
             self.current_config = config
             self.show_loading(True, "Generating preview...")
 
@@ -771,9 +904,8 @@ class WorkshopGUI:
                     self.root.after(50, self.load_background_preview)
                 except Exception as e:
                     print(f"Preview generation failed: {e}")
-                    error_msg = str(e)
                     self.root.after(0, lambda: self.show_loading(False))
-                    self.root.after(0, lambda: self.show_preview_error(error_msg))
+                    self.root.after(0, lambda: self.show_preview_error(str(e)))
                 finally:
                     self.generation_in_progress = False
 
@@ -784,7 +916,6 @@ class WorkshopGUI:
             self.show_loading(False)
 
     def show_preview_error(self, error_msg: str):
-        """Show preview error in canvas."""
         try:
             self.canvas.delete("all")
             canvas_width = self.canvas.winfo_width()
@@ -794,15 +925,12 @@ class WorkshopGUI:
                 self.canvas.create_text(
                     canvas_width//2, canvas_height//2,
                     text=f"Preview Error\n{error_msg[:100]}...",
-                    font=("Arial", 14),
-                    fill="red",
-                    justify="center"
+                    font=("Arial", 14), fill="red", justify="center"
                 )
         except Exception as e:
             print(f"Failed to show preview error: {e}")
 
     def show_loading(self, show: bool, message: str = "Loading..."):
-        """Show/hide loading overlay."""
         if show:
             self.loading_label.configure(text=message)
             self.loading_frame.place(relx=0.5, rely=0.5, anchor="center")
@@ -814,7 +942,6 @@ class WorkshopGUI:
             self.status_label.configure(text="Ready")
 
     def load_background_preview(self):
-        """Load generated preview."""
         try:
             filename = f"main_preview_{id(self)}.png"
             if os.path.exists(filename):
@@ -822,11 +949,10 @@ class WorkshopGUI:
                 self.tile_background(image)
                 self.show_loading(False)
                 self.status_label.configure(text="Preview updated")
-
                 try:
                     os.remove(filename)
-                except Exception as cleanup_error:
-                    print(f"Failed to cleanup preview file: {cleanup_error}")
+                except Exception:
+                    pass
             else:
                 if os.path.exists("temp_preview.png"):
                     image = Image.open("temp_preview.png")
@@ -844,7 +970,6 @@ class WorkshopGUI:
             self.show_preview_error(f"Loading failed: {str(e)}")
 
     def tile_background(self, image: Image.Image):
-        """Tile background image."""
         try:
             canvas_width = self.canvas.winfo_width()
             canvas_height = self.canvas.winfo_height()
@@ -871,8 +996,7 @@ class WorkshopGUI:
 
                 self.canvas.create_rectangle(
                     x-1, y-1, x+new_width+1, y+new_height+1,
-                    outline=("gray" if ctk.get_appearance_mode() == "Light" else "gray40"),
-                    width=1
+                    outline=("gray" if ctk.get_appearance_mode() == "Light" else "gray40"), width=1
                 )
 
         except Exception as e:
@@ -880,7 +1004,6 @@ class WorkshopGUI:
             self.show_preview_error(f"Display failed: {str(e)}")
 
     def generate_wallpaper(self):
-        """Generate full resolution wallpaper."""
         width, height = self.get_current_resolution()
 
         config = {
@@ -896,6 +1019,15 @@ class WorkshopGUI:
             "output_filename": f"wallpaper_{width}x{height}_{int(time.time())}.png"
         }
 
+        if self.use_gradient_bg.get():
+            config["bg_gradient"] = [self.bg_gradient_start, self.bg_gradient_end]
+
+        if self.use_svg_tint.get():
+            config["tint_color"] = self.svg_tint_color
+
+        if self.use_svg_gradient.get():
+            config["svg_gradient"] = [self.svg_gradient_start, self.svg_gradient_end]
+
         self.show_loading(True, "Generating wallpaper...")
 
         def generate():
@@ -903,13 +1035,11 @@ class WorkshopGUI:
                 generate_wallpaper_with_config(config)
                 self.root.after(0, lambda: self.on_generation_complete(config["output_filename"]))
             except Exception as error:
-                error_msg = str(error)
-                self.root.after(0, lambda: self.on_generation_error(error_msg))
+                self.root.after(0, lambda: self.on_generation_error(str(error)))
 
         threading.Thread(target=generate, daemon=True).start()
 
     def on_generation_complete(self, filename: str):
-        """Handle successful generation."""
         self.show_loading(False)
         self.status_label.configure(text=f"Saved: {filename}")
         self.progress_bar.set(1.0)
@@ -924,22 +1054,18 @@ class WorkshopGUI:
         label = ctk.CTkLabel(dialog, text=f"Wallpaper saved!\n{filename}", font=ctk.CTkFont(size=12))
         label.pack(pady=20)
 
-        ok_btn = ctk.CTkButton(dialog, text="OK", command=dialog.destroy, width=80)
-        ok_btn.pack(pady=10)
+        ctk.CTkButton(dialog, text="OK", command=dialog.destroy, width=80).pack(pady=10)
 
     def on_generation_error(self, error: str):
-        """Handle generation error."""
         self.show_loading(False)
         self.status_label.configure(text="Generation failed")
         print(f"Error: {error}")
 
     def on_window_resize(self, event):
-        """Handle window resize."""
         if event.widget == self.root:
             self.schedule_background_update()
 
     def on_closing(self):
-        """Clean up on close."""
         try:
             if os.path.exists("temp_preview.png"):
                 os.remove("temp_preview.png")
@@ -948,7 +1074,6 @@ class WorkshopGUI:
         self.root.destroy()
 
     def run(self):
-        """Start the application."""
         self.root.mainloop()
 
 

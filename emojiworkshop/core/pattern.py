@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance
 from enum import Enum
 import random
 import math
 import cairosvg
+import io
 
 
 class SvgBox:
@@ -42,7 +43,36 @@ class SvgCache:
 
 _svg_cache = SvgCache()
 
-import io
+
+def tint_image(img: Image.Image, color: Tuple[int, int, int]) -> Image.Image:
+    """Tint an RGBA image with the specified RGB color."""
+    if img.mode != 'RGBA':
+        img = img.convert('RGBA')
+    
+    r, g, b = color
+    pixels = img.load()
+    width, height = img.size
+    
+    for y in range(height):
+        for x in range(width):
+            pixel = pixels[x, y]
+            if pixel[3] > 0:
+                orig_r, orig_g, orig_b, orig_a = pixel
+                brightness = (orig_r + orig_g + orig_b) / 3 / 255
+                new_r = min(255, int(r * brightness))
+                new_g = min(255, int(g * brightness))
+                new_b = min(255, int(b * brightness))
+                pixels[x, y] = (new_r, new_g, new_b, orig_a)
+    
+    return img
+
+
+def interpolate_color(color1: Tuple[int, int, int], color2: Tuple[int, int, int], ratio: float) -> Tuple[int, int, int]:
+    """Interpolate between two colors."""
+    r = int(color1[0] * (1 - ratio) + color2[0] * ratio)
+    g = int(color1[1] * (1 - ratio) + color2[1] * ratio)
+    b = int(color1[2] * (1 - ratio) + color2[2] * ratio)
+    return (r, g, b)
 
 
 class BasePattern(ABC):
@@ -61,9 +91,24 @@ class BasePattern(ABC):
         """Generate the pattern on the image."""
         pass
 
-    def get_svg(self, size: int) -> Image.Image:
-        """Get SVG with specified size using cache."""
-        return _svg_cache.get_svg(self.config["svg_path"], size)
+    def get_svg(self, size: int, tint: Tuple[int, int, int] = None) -> Image.Image:
+        """Get SVG with specified size, optionally tinted."""
+        svg_img = _svg_cache.get_svg(self.config["svg_path"], size)
+        if tint:
+            return tint_image(svg_img, tint)
+        return svg_img
+
+    def get_tint_color(self, x: int, y: int, img_size: Tuple[int, int]) -> Optional[Tuple[int, int, int]]:
+        """Get tint color for position, supporting gradients."""
+        tint = self.config.get("tint_color")
+        svg_gradient = self.config.get("svg_gradient")
+        
+        if svg_gradient and len(svg_gradient) >= 2:
+            ratio = (x / img_size[0] + y / img_size[1]) / 2
+            return interpolate_color(svg_gradient[0], svg_gradient[1], ratio)
+        elif tint:
+            return tint
+        return None
 
     def place_svg_safely(
         self, x: int, y: int,
@@ -139,7 +184,8 @@ class MosaicPattern(BasePattern):
 
             size_factor = 0.5 + random.uniform(0, 1.5 * scale_var)
             size = int(self.config["svg_size"] * size_factor)
-            svg_img = self.get_svg(size)
+            tint = self.get_tint_color(x, y, img_size)
+            svg_img = self.get_svg(size, tint)
 
             safe_pos = self.place_svg_safely(x, y, size, img_size)
 
@@ -177,7 +223,8 @@ class LotusPattern(BasePattern):
                     size_factor = max(0.4, 1.2 - (i * 0.03)) + \
                         random.uniform(-scale_var*0.5, scale_var*0.5)
                     size = int(self.config["svg_size"] * size_factor)
-                    svg_img = self.get_svg(size)
+                    tint = self.get_tint_color(int(x), int(y), img_size)
+                    svg_img = self.get_svg(size, tint)
 
                     safe_pos = self.place_svg_safely(int(x), int(y), size, img_size)
 
@@ -210,7 +257,8 @@ class StackPattern(BasePattern):
 
                 size_factor = 1.0 + random.uniform(-scale_var * 0.3, scale_var * 0.3)
                 size = int(self.config["svg_size"] * size_factor)
-                svg_img = self.get_svg(size)
+                tint = self.get_tint_color(int(x), int(base_y), img_size)
+                svg_img = self.get_svg(size, tint)
 
                 self.draw_svg_with_rotation(image, svg_img, x, base_y, 0)
 
@@ -233,7 +281,8 @@ class SprinklePattern(BasePattern):
 
             size_factor = 0.6 + random.uniform(0, 1.0 + scale_var)
             size = int(self.config["svg_size"] * size_factor)
-            svg_img = self.get_svg(size)
+            tint = self.get_tint_color(x, y, img_size)
+            svg_img = self.get_svg(size, tint)
 
             safe_pos = self.place_svg_safely(x, y, size, img_size)
 
@@ -266,7 +315,8 @@ class PrismPattern(BasePattern):
 
                 size_factor = 0.8 + random.uniform(-scale_var, scale_var)
                 size = int(self.config["svg_size"] * size_factor)
-                svg_img = self.get_svg(size)
+                tint = self.get_tint_color(int(x), int(y), img_size)
+                svg_img = self.get_svg(size, tint)
 
                 safe_pos = self.place_svg_safely(x, y, size, img_size)
 
