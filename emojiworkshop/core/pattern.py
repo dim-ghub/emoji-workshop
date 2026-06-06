@@ -179,7 +179,7 @@ class LotusPattern(BasePattern):
                     size = int(self.config["svg_size"] * size_factor)
                     svg_img = self.get_svg(size)
 
-                    safe_pos = self.place_svg_safely(x, y, size, img_size)
+                    safe_pos = self.place_svg_safely(int(x), int(y), size, img_size)
 
                     if safe_pos is not None:
                         safe_x, safe_y = safe_pos
