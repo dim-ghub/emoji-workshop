@@ -16,6 +16,7 @@ DEFAULT_CONFIG = {
     "color": ColorPalettes.GRAY,
     "tint_color": None,
     "bg_gradient": None,
+    "bg_gradient_direction": "vertical",
     "svg_gradient": None,
     "margin": 10,
     "output_filename": "wallpaper.png"
@@ -29,7 +30,8 @@ def generate_wallpaper_with_config(config: Dict[str, Any]):
     if bg_gradient:
         img = Image.new("RGB", config["img_size"], bg_gradient[0])
         draw = ImageDraw.Draw(img)
-        draw_gradient(draw, config["img_size"], bg_gradient)
+        direction = config.get("bg_gradient_direction", "vertical")
+        draw_gradient(draw, config["img_size"], bg_gradient, direction)
     else:
         img = Image.new("RGB", config["img_size"], config["color"].background)
         draw = ImageDraw.Draw(img)
@@ -56,28 +58,26 @@ def draw_gradient(draw: ImageDraw.Draw, size: Tuple[int, int], gradient: List[Tu
     
     if direction == "vertical":
         for y in range(h):
-            ratio = y / h
+            ratio = y / (h - 1) if h > 1 else 0
             r = int(colors[0][0] * (1 - ratio) + colors[1][0] * ratio)
             g = int(colors[0][1] * (1 - ratio) + colors[1][1] * ratio)
             b = int(colors[0][2] * (1 - ratio) + colors[1][2] * ratio)
             draw.line([(0, y), (w, y)], fill=(r, g, b))
     elif direction == "horizontal":
         for x in range(w):
-            ratio = x / w
+            ratio = x / (w - 1) if w > 1 else 0
             r = int(colors[0][0] * (1 - ratio) + colors[1][0] * ratio)
             g = int(colors[0][1] * (1 - ratio) + colors[1][1] * ratio)
             b = int(colors[0][2] * (1 - ratio) + colors[1][2] * ratio)
             draw.line([(x, 0), (x, h)], fill=(r, g, b))
     elif direction == "diagonal":
-        for i in range(max(w, h)):
-            ratio = i / max(w, h)
-            r = int(colors[0][0] * (1 - ratio) + colors[1][0] * ratio)
-            g = int(colors[0][1] * (1 - ratio) + colors[1][1] * ratio)
-            b = int(colors[0][2] * (1 - ratio) + colors[1][2] * ratio)
-            if i < h:
-                draw.point((0, i), fill=(r, g, b))
-            if i < w:
-                draw.point((i, 0), fill=(r, g, b))
+        for y in range(h):
+            for x in range(w):
+                ratio = (x / (w - 1) + y / (h - 1)) / 2 if w > 1 and h > 1 else 0
+                r = int(colors[0][0] * (1 - ratio) + colors[1][0] * ratio)
+                g = int(colors[0][1] * (1 - ratio) + colors[1][1] * ratio)
+                b = int(colors[0][2] * (1 - ratio) + colors[1][2] * ratio)
+                draw.point((x, y), fill=(r, g, b))
 
 
 def generate_wallpaper():

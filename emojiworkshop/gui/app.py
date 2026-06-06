@@ -886,6 +886,7 @@ class WorkshopGUI:
 
             if self.use_gradient_bg.get():
                 config["bg_gradient"] = [self.bg_gradient_start, self.bg_gradient_end]
+                config["bg_gradient_direction"] = self.gradient_direction.get()
 
             if self.use_svg_tint.get():
                 config["tint_color"] = self.svg_tint_color
@@ -1021,6 +1022,7 @@ class WorkshopGUI:
 
         if self.use_gradient_bg.get():
             config["bg_gradient"] = [self.bg_gradient_start, self.bg_gradient_end]
+            config["bg_gradient_direction"] = self.gradient_direction.get()
 
         if self.use_svg_tint.get():
             config["tint_color"] = self.svg_tint_color
