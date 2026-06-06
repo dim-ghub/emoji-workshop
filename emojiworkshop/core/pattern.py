@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw
 from enum import Enum
 import random
 import math
+import cairosvg
 
 
 class SvgBox:
@@ -21,7 +22,7 @@ class SvgBox:
 
 
 class SvgCache:
-    """Efficient SVG caching to avoid repeated image loading."""
+    """Efficient SVG caching to avoid repeated rendering."""
 
     def __init__(self):
         self._cache = {}
@@ -30,8 +31,8 @@ class SvgCache:
         """Get SVG rendered at specified size from cache or create new."""
         key = (svg_path, size)
         if key not in self._cache:
-            svg_img = Image.open(svg_path).convert("RGBA")
-            self._cache[key] = svg_img.resize((size, size), Image.LANCZOS)
+            png_data = cairosvg.svg2png(url=svg_path, output_width=size, output_height=size)
+            self._cache[key] = Image.open(io.BytesIO(png_data)).convert("RGBA")
         return self._cache[key].copy()
 
     def clear(self):
@@ -40,6 +41,8 @@ class SvgCache:
 
 
 _svg_cache = SvgCache()
+
+import io
 
 
 class BasePattern(ABC):
@@ -127,11 +130,12 @@ class MosaicPattern(BasePattern):
         img_size: Tuple[int, int], scale_var: float
     ) -> None:
         attempts = 0
-        max_attempts = svg_count * 10
+        max_attempts = max(svg_count * 10, 1)
 
         while len(self.placed_svgs) < svg_count and attempts < max_attempts:
-            x = random.randint(100, img_size[0] - 100)
-            y = random.randint(100, img_size[1] - 100)
+            margin = min(50, img_size[0] // 4, img_size[1] // 4)
+            x = random.randint(margin, img_size[0] - margin)
+            y = random.randint(margin, img_size[1] - margin)
 
             size_factor = 0.5 + random.uniform(0, 1.5 * scale_var)
             size = int(self.config["svg_size"] * size_factor)
@@ -220,11 +224,12 @@ class SprinklePattern(BasePattern):
         img_size: Tuple[int, int], scale_var: float
     ) -> None:
         attempts = 0
-        max_attempts = svg_count * 15
+        max_attempts = max(svg_count * 15, 1)
 
         while len(self.placed_svgs) < svg_count and attempts < max_attempts:
-            x = random.randint(80, img_size[0] - 80)
-            y = random.randint(80, img_size[1] - 80)
+            margin = min(40, img_size[0] // 5, img_size[1] // 5)
+            x = random.randint(margin, img_size[0] - margin)
+            y = random.randint(margin, img_size[1] - margin)
 
             size_factor = 0.6 + random.uniform(0, 1.0 + scale_var)
             size = int(self.config["svg_size"] * size_factor)
